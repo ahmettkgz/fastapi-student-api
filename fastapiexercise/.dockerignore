@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env         # Hassas veriler içeriyorsa Docker imajına kopyalamayın.
+__pycache__/
+*.pyc
+*.bak
+*.swp
+venv/
+.pytest_cache/
+.vscode/
+npm-debug.log
