@@ -1,0 +1,13 @@
+# config.example.toml
+
+# Veritabanı Bağlantı Bilgileri
+# Bu bölüm, uygulamanızın veritabanına bağlanmak için kullanacağı ayarları içerir.
+# Bu dosya genellikle .gitignore'a eklenir ve hassas bilgiler içermemelidir.
+# Ortam değişkenleri (örneğin Docker Compose ile sağlananlar) bu değerleri geçersiz kılacaktır.
+[database]
+name = "denemedb"
+user = "postgres"
+password = "password" # Bu bir örnek şifredir. Kendi güvenli şifrenizi kullanın.
+host = "db" # Docker Compose ortamında veritabanı servisinin adı
+port = 5432
+

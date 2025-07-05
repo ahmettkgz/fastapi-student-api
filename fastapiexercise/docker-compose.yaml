@@ -1,3 +1,4 @@
+# docker-compose.yaml (Your original file, no changes needed here)
 version: '3.8'
 
 services:
@@ -13,7 +14,6 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      # Düzeltme: pg_isready komutunda doğru kullanıcı adı ve veritabanı adı kullanıldı
       test: ["CMD-SHELL", "pg_isready -U postgres -d denemedb"]
       interval: 5s
       timeout: 5s
@@ -22,7 +22,11 @@ services:
 
   web:
     container_name: my_fastapi_app
-    build: .
+    build:
+      context: git@github.com:ahmettkgz/fastapi-student-api.git#main
+      dockerfile: fastapiexercise/Dockerfile # This tells Docker where to find the Dockerfile within the cloned repo
+      ssh:
+        - default # This is key for enabling SSH agent forwarding during the build
     ports:
       - "8000:8000"
     environment:
@@ -35,7 +39,7 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - .:/app
+      - .:/app # This mounts your local development directory into the container
     command: uvicorn myproject.app.myapi:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
