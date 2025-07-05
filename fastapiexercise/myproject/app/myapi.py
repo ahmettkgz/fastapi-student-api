@@ -1,23 +1,17 @@
-# main.py
+# fastapiexercise/myproject/app/myapi.py
+
 from fastapi import FastAPI, HTTPException, Path, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 from contextlib import asynccontextmanager
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import os
-from dotenv import load_dotenv
+import asyncpg # asyncpg'yi doğrudan kullanmasak bile, async fonksiyonlar için bu import genelde tutulur.
+# database.py'den gerekli fonksiyonları içe aktar
+from .database import get_db, get_database_config # Göreceli içe aktarma
 
-load_dotenv()
+# Veritabanı konfigürasyonunu database.py modülünden al
+DATABASE_CONFIG = get_database_config() # Bu DATABASE_CONFIG artık doğru yerden geliyor
 
-DATABASE_CONFIG = {
-    "host": os.getenv("DB_HOST", "localhost"),
-    "database": os.getenv("DB_NAME", "your_database"),
-    "user": os.getenv("DB_USER", "your_username"),
-    "password": os.getenv("DB_PASSWORD", "your_password"),
-    "port": os.getenv("DB_PORT", "5432")
-}
-
+# Pydantic modelleri (Değişiklik yok)
 class Student(BaseModel):
     name: str
     age: int
@@ -34,25 +28,13 @@ class StudentResponse(BaseModel):
     age: int
     class_: Optional[str] = None
 
-def get_db():
-    conn = None
+# Veritabanı tablosunu oluştur (asyncpg uyumlu)
+async def create_tables():
     try:
-        conn = psycopg2.connect(**DATABASE_CONFIG)
-        yield conn
-    except Exception as e:
-        print(f"Database connection error: {e}")
-        raise HTTPException(status_code=500, detail="Database connection failed")
-    finally:
-        if conn:
-            conn.close()
-
-# Veritabanı tablosunu oluştur
-def create_tables():
-    try:
-        conn = psycopg2.connect(**DATABASE_CONFIG)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
+        # database.py'deki get_db_connection yerine doğrudan asyncpg.connect kullanıyoruz
+        # çünkü bu sadece başlatma sırasında bir kez olacak bir bağlantı.
+        conn = await asyncpg.connect(**DATABASE_CONFIG) 
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(100) NOT NULL,
@@ -60,45 +42,41 @@ def create_tables():
                 class VARCHAR(50)
             );
         """)
-        
-        cursor.execute("SELECT COUNT(*) FROM students")
-        count = cursor.fetchone()[0]
-        
+        count = await conn.fetchval("SELECT COUNT(*) FROM students")
         if count == 0:
-            cursor.execute("""
-                INSERT INTO students (name, age, class) VALUES 
+            await conn.execute("""
+                INSERT INTO students (name, age, class) VALUES
                 ('John', 20, 'Year 2'),
                 ('Jane', 22, 'Year 4');
             """)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
+        await conn.close()
         print("✅ Database tables created successfully")
-        
     except Exception as e:
         print(f"❌ Error creating tables: {e}")
+        # Hata durumunda uygulamanın başlamasını engelle
+        raise
 
+# Lifespan context manager (asyncpg uyumlu)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("🚀 Uygulama başlıyor...")
     try:
-        conn = psycopg2.connect(**DATABASE_CONFIG)
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1;")
-        cursor.fetchone()
-        cursor.close()
-        conn.close()
-        print("✅ Database connection established successfully")
-        
-        create_tables()
-        
+        # Veritabanı bağlantısını test et
+        conn = await asyncpg.connect(**DATABASE_CONFIG)
+        await conn.execute("SELECT 1;")
+        await conn.close()
+        print("✅ Veritabanı bağlantısı başarıyla kuruldu.")
+
+        # Tabloları oluştur
+        await create_tables() # create_tables'ı await ile çağırın
+
     except Exception as e:
-        print(f"❌ Could not connect to the database: {e}")
-        raise e
-    
-    yield
-    
-    print("🔄 Shutting down...")
+        print(f"❌ Veritabanına bağlanılamadı veya tablolar oluşturulamadı: {e}")
+        raise e # Uygulamanın başlamasına engel ol
+
+    yield # Uygulama ömrü burada devam eder
+
+    print("🔄 Uygulama kapanıyor...")
 
 # FastAPI uygulaması
 app = FastAPI(
@@ -108,143 +86,123 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Ana sayfa
 @app.get("/")
-def index():
+async def index(): # Asenkron hale getirildi
     return {"message": "Student Management API", "status": "running"}
 
+# Tüm öğrencileri getir (asyncpg uyumlu)
 @app.get("/students", response_model=List[StudentResponse])
-def get_all_students(conn=Depends(get_db)):
+async def get_all_students(conn=Depends(get_db)):
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT id, name, age, class FROM students ORDER BY id;")
-        students = cursor.fetchall()
-        cursor.close()
-        
-        return [StudentResponse(**dict(student)) for student in students]
-    
+        rows = await conn.fetch("SELECT id, name, age, class as class_ FROM students ORDER BY id;")
+        return [StudentResponse(**dict(row)) for row in rows]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
+# ID ile öğrenci getir (asyncpg uyumlu)
 @app.get("/students/{student_id}", response_model=StudentResponse)
-def get_student(
-    student_id: int = Path(..., title="The ID of the student to retrieve", gt=0),
+async def get_student(
+    student_id: int = Path(..., title="Getirilecek öğrencinin ID'si", gt=0),
     conn=Depends(get_db)
 ):
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT id, name, age, class FROM students WHERE id = %s;", (student_id,))
-        student = cursor.fetchone()
-        cursor.close()
-        
-        if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
-        
-        return StudentResponse(**dict(student))
-    
+        row = await conn.fetchrow("SELECT id, name, age, class as class_ FROM students WHERE id = $1;", student_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Öğrenci bulunamadı")
+        return StudentResponse(**dict(row))
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
-@app.post("/students", response_model=StudentResponse)
-def add_student(student: Student, conn=Depends(get_db)):
+# İsim ile öğrenci getir (asyncpg uyumlu)
+@app.get("/students/search/{name}", response_model=List[StudentResponse])
+async def get_student_by_name(name: str, conn=Depends(get_db)):
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cursor.execute("""
-            INSERT INTO students (name, age, class) 
-            VALUES (%s, %s, %s) 
-            RETURNING id, name, age, class;
-        """, (student.name, student.age, student.class_))
-        
-        new_student = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        
-        return StudentResponse(**dict(new_student))
-    
+        rows = await conn.fetch("SELECT id, name, age, class as class_ FROM students WHERE name ILIKE $1;", f"%{name}%")
+        return [StudentResponse(**dict(row)) for row in rows]
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
+# Yeni öğrenci ekle (asyncpg uyumlu)
+@app.post("/students", response_model=StudentResponse)
+async def add_student(student: Student, conn=Depends(get_db)):
+    try:
+        row = await conn.fetchrow("""
+            INSERT INTO students (name, age, class)
+            VALUES ($1, $2, $3)
+            RETURNING id, name, age, class as class_;
+        """, student.name, student.age, student.class_)
+        return StudentResponse(**dict(row))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
+
+# Öğrenci güncelle (asyncpg uyumlu)
 @app.put("/students/{student_id}", response_model=StudentResponse)
-def update_student(
-    student_id: int, 
-    student: UpdateStudent, 
+async def update_student(
+    student_id: int,
+    student: UpdateStudent,
     conn=Depends(get_db)
 ):
     try:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        cursor.execute("SELECT id FROM students WHERE id = %s;", (student_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            raise HTTPException(status_code=404, detail="Student not found")
-        
-        # Güncelleme sorgusu oluştur
+        exists = await conn.fetchval("SELECT id FROM students WHERE id = $1;", student_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail="Öğrenci bulunamadı")
         update_fields = []
         values = []
-        
         if student.name is not None:
-            update_fields.append("name = %s")
+            update_fields.append("name = $%d" % (len(values)+1))
             values.append(student.name)
-        
         if student.age is not None:
-            update_fields.append("age = %s")
+            update_fields.append("age = $%d" % (len(values)+1))
             values.append(student.age)
-        
         if student.class_ is not None:
-            update_fields.append("class = %s")
+            update_fields.append("class = $%d" % (len(values)+1))
             values.append(student.class_)
-        
         if not update_fields:
-            raise HTTPException(status_code=400, detail="No fields to update")
-        
+            raise HTTPException(status_code=400, detail="Güncellenecek alan bulunamadı")
         values.append(student_id)
-        
-        cursor.execute(f"""
-            UPDATE students 
-            SET {', '.join(update_fields)} 
-            WHERE id = %s 
-            RETURNING id, name, age, class;
-        """, values)
-        
-        updated_student = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        
-        return StudentResponse(**dict(updated_student))
-    
+        query = f"""
+            UPDATE students
+            SET {', '.join(update_fields)}
+            WHERE id = ${len(values)}
+            RETURNING id, name, age, class as class_;
+        """
+        row = await conn.fetchrow(query, *values)
+        return StudentResponse(**dict(row))
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
+# Öğrenci sil (asyncpg uyumlu)
 @app.delete("/students/{student_id}")
-def delete_student(student_id: int, conn=Depends(get_db)):
+async def delete_student(student_id: int, conn=Depends(get_db)):
     try:
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM students WHERE id = %s RETURNING id;", (student_id,))
-        deleted_student = cursor.fetchone()
-        
-        if not deleted_student:
-            cursor.close()
-            raise HTTPException(status_code=404, detail="Student not found")
-        
-        conn.commit()
-        cursor.close()
-        
-        return {"message": "Student deleted successfully", "deleted_id": deleted_student[0]}
-    
+        row = await conn.fetchrow("DELETE FROM students WHERE id = $1 RETURNING id;", student_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Öğrenci bulunamadı")
+        return {"message": "Öğrenci başarıyla silindi", "deleted_id": row["id"]}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
+# Veritabanı durumu kontrol et (asyncpg uyumlu)
+@app.get("/health")
+async def health_check(conn=Depends(get_db)):
+    try:
+        count = await conn.fetchval("SELECT COUNT(*) FROM students;")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "total_students": count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sağlık kontrolü başarısız oldu: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Çalıştırırken, uygulama nesnesinin yolu myproject.app.myapi içinde 'app'dir.
+    uvicorn.run("myproject.app.myapi:app", host="0.0.0.0", port=8000, reload=True)
