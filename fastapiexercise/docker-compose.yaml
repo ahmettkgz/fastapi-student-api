@@ -23,10 +23,9 @@ services:
   web:
     container_name: my_fastapi_app
     build:
-      context: git@github.com:ahmettkgz/fastapi-student-api.git#main
-      dockerfile: fastapiexercise/Dockerfile # This tells Docker where to find the Dockerfile within the cloned repo
-      ssh:
-        - default # This is key for enabling SSH agent forwarding during the build
+      context: ../
+      dockerfile: fastapiexercise/Dockerfile
+
     ports:
       - "8000:8000"
     environment:
