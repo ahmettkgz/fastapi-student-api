@@ -8,6 +8,8 @@ import asyncpg # asyncpg'yi doğrudan kullanmasak bile, async fonksiyonlar için
 # database.py'den gerekli fonksiyonları içe aktar
 from .database import get_db, get_database_config # Göreceli içe aktarma
 
+
+
 # Veritabanı konfigürasyonunu database.py modülünden al
 DATABASE_CONFIG = get_database_config() # Bu DATABASE_CONFIG artık doğru yerden geliyor
 
@@ -79,7 +81,7 @@ async def lifespan(app: FastAPI):
     print("🔄 Uygulama kapanıyor...")
 
 # FastAPI uygulaması
-app = FastAPI(
+fastapi_app = FastAPI(
     title="Student Management API",
     description="A simple API to manage students with PostgreSQL",
     version="1.0.0",
@@ -87,12 +89,12 @@ app = FastAPI(
 )
 
 # Ana sayfa
-@app.get("/")
+@fastapi_app.get("/")
 async def index(): # Asenkron hale getirildi
     return {"message": "Student Management API", "status": "running"}
 
 # Tüm öğrencileri getir (asyncpg uyumlu)
-@app.get("/students", response_model=List[StudentResponse])
+@fastapi_app.get("/students", response_model=List[StudentResponse])
 async def get_all_students(conn=Depends(get_db)):
     try:
         rows = await conn.fetch("SELECT id, name, age, class as class_ FROM students ORDER BY id;")
@@ -101,7 +103,7 @@ async def get_all_students(conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # ID ile öğrenci getir (asyncpg uyumlu)
-@app.get("/students/{student_id}", response_model=StudentResponse)
+@fastapi_app.get("/students/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: int = Path(..., title="Getirilecek öğrencinin ID'si", gt=0),
     conn=Depends(get_db)
@@ -117,7 +119,7 @@ async def get_student(
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # İsim ile öğrenci getir (asyncpg uyumlu)
-@app.get("/students/search/{name}", response_model=List[StudentResponse])
+@fastapi_app.get("/students/search/{name}", response_model=List[StudentResponse])
 async def get_student_by_name(name: str, conn=Depends(get_db)):
     try:
         rows = await conn.fetch("SELECT id, name, age, class as class_ FROM students WHERE name ILIKE $1;", f"%{name}%")
@@ -126,7 +128,7 @@ async def get_student_by_name(name: str, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # Yeni öğrenci ekle (asyncpg uyumlu)
-@app.post("/students", response_model=StudentResponse)
+@fastapi_app.post("/students", response_model=StudentResponse)
 async def add_student(student: Student, conn=Depends(get_db)):
     try:
         row = await conn.fetchrow("""
@@ -139,7 +141,7 @@ async def add_student(student: Student, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # Öğrenci güncelle (asyncpg uyumlu)
-@app.put("/students/{student_id}", response_model=StudentResponse)
+@fastapi_app.put("/students/{student_id}", response_model=StudentResponse)
 async def update_student(
     student_id: int,
     student: UpdateStudent,
@@ -177,7 +179,7 @@ async def update_student(
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # Öğrenci sil (asyncpg uyumlu)
-@app.delete("/students/{student_id}")
+@fastapi_app.delete("/students/{student_id}")
 async def delete_student(student_id: int, conn=Depends(get_db)):
     try:
         row = await conn.fetchrow("DELETE FROM students WHERE id = $1 RETURNING id;", student_id)
@@ -190,7 +192,7 @@ async def delete_student(student_id: int, conn=Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Veritabanı hatası: {str(e)}")
 
 # Veritabanı durumu kontrol et (asyncpg uyumlu)
-@app.get("/health")
+@fastapi_app.get("/health")
 async def health_check(conn=Depends(get_db)):
     try:
         count = await conn.fetchval("SELECT COUNT(*) FROM students;")
@@ -205,4 +207,4 @@ async def health_check(conn=Depends(get_db)):
 if __name__ == "__main__":
     import uvicorn
     # Çalıştırırken, uygulama nesnesinin yolu myproject.app.myapi içinde 'app'dir.
-    uvicorn.run("myproject.app.myapi:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("myproject.app.myapi:fastapi_app", host="0.0.0.0", port=8000, reload=True)

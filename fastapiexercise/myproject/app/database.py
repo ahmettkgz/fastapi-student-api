@@ -1,40 +1,67 @@
 # fastapiexercise/myproject/app/database.py
-
 import os
 import asyncpg
 from fastapi import Depends, HTTPException
 
 def load_database_config() -> dict:
     """Ortam değişkenlerinden veritabanı ayarlarını yükler."""
-    
-    # Doğrudan Docker Compose'da ayarlanan ortam değişkenlerini kullanıyoruz.
-    # Hassas bilgiler için varsayılan değerler kaldırıldı.
-    # Bu, bu değişkenlerin ortamda ayarlanmasını ZORUNLU kılar.
+    # Hem Docker (DATABASE_*) hem de CLI (.env dosyası DB_*) variable'larını destekler
     config = {
-        "host": os.getenv("DATABASE_HOST", "db"), # 'db' Docker Compose servis adı için varsayılan
-        "database": os.getenv("DATABASE_NAME", "denemedb"), # 'denemedb' varsayılan veritabanı adı
-        "user": os.getenv("DATABASE_USER"), # Varsayılan yok, ortam değişkeni ZORUNLU
-        "password": os.getenv("DATABASE_PASSWORD"), # Varsayılan yok, ortam değişkeni ZORUNLU
-        "port": os.getenv("DATABASE_PORT", "5432"), # Varsayılan port
+        "host": os.getenv("DATABASE_HOST") or os.getenv("DB_HOST", "localhost"),
+        "database": os.getenv("DATABASE_NAME") or os.getenv("DB_NAME", "denemedb"),
+        "user": os.getenv("DATABASE_USER") or os.getenv("DB_USER"),
+        "password": os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD"),
+        "port": os.getenv("DATABASE_PORT") or os.getenv("DB_PORT", "5432"),
     }
-
+    
     # Kritik veritabanı bilgileri için kontrol
     missing_vars = [key for key, value in config.items() if value is None]
     if missing_vars:
+        # Hangi environment variable'ların eksik olduğunu göster
+        missing_docker_vars = []
+        missing_cli_vars = []
+        
+        for key in missing_vars:
+            if key == "user":
+                missing_docker_vars.append("DATABASE_USER")
+                missing_cli_vars.append("DB_USER")
+            elif key == "password":
+                missing_docker_vars.append("DATABASE_PASSWORD")
+                missing_cli_vars.append("DB_PASSWORD")
+            elif key == "host":
+                missing_docker_vars.append("DATABASE_HOST")
+                missing_cli_vars.append("DB_HOST")
+            elif key == "database":
+                missing_docker_vars.append("DATABASE_NAME")
+                missing_cli_vars.append("DB_NAME")
+            elif key == "port":
+                missing_docker_vars.append("DATABASE_PORT")
+                missing_cli_vars.append("DB_PORT")
+        
         raise ValueError(
             f"❌ Eksik veritabanı ortam değişkenleri: {', '.join(missing_vars)}. "
-            "Lütfen DATABASE_USER ve DATABASE_PASSWORD gibi değişkenleri ayarlayın."
+            f"Docker için: {', '.join(missing_docker_vars)} "
+            f"veya CLI için: {', '.join(missing_cli_vars)} değişkenlerini ayarlayın."
         )
-
+    
     # Portu integer'a dönüştür
     if isinstance(config["port"], str):
         try:
             config["port"] = int(config["port"])
         except ValueError:
             print(f"❌ Port değeri '{config['port']}' integer'a dönüştürülemiyor. Varsayılan 5432 kullanılacak.")
-            config["port"] = 5432 
+            config["port"] = 5432
     
-    print(f"DEBUG: Yüklenen veritabanı konfigürasyonu: {config}") # Debugging için ekledik
+    # Hangi değişkenlerin kullanıldığını göster
+    source_info = []
+    if os.getenv("DATABASE_HOST"):
+        source_info.append("Docker variables (DATABASE_*)")
+    if os.getenv("DB_HOST"):
+        source_info.append("CLI variables (DB_*)")
+    
+    print(f"DEBUG: Kullanılan değişken kaynağı: {', '.join(source_info) if source_info else 'Varsayılan değerler'}")
+    print(f"DEBUG: Yüklenen veritabanı konfigürasyonu: {config}")
+    
     return config
 
 # Modül yüklendiğinde veritabanı konfigürasyonunu bir kez yükle
